@@ -203,8 +203,10 @@ public class PathHierarchyAggregator extends TermsAggregator {
         if (aggregator instanceof NumericMetricsAggregator.MultiValue) {
             assert key != null : "this should be picked up before the aggregation is executed - on validate";
             return (b1, b2) -> {
-                double v1 = ((NumericMetricsAggregator.MultiValue) aggregator).metric(key, ((InternalPathHierarchy.InternalBucket) b1).bucketOrd);
-                double v2 = ((NumericMetricsAggregator.MultiValue) aggregator).metric(key, ((InternalPathHierarchy.InternalBucket) b2).bucketOrd);
+                double v1 = ((NumericMetricsAggregator.MultiValue) aggregator)
+                        .metric(key, ((InternalPathHierarchy.InternalBucket) b1).bucketOrd);
+                double v2 = ((NumericMetricsAggregator.MultiValue) aggregator)
+                        .metric(key, ((InternalPathHierarchy.InternalBucket) b2).bucketOrd);
                 // some metrics may return NaN (eg. avg, variance, etc...) in which case we'd like to push all of those to
                 // the bottom
                 return Comparators.compareDiscardNaN(v1, v2, asc);
@@ -213,8 +215,10 @@ public class PathHierarchyAggregator extends TermsAggregator {
 
         // single-value metrics agg
         return (b1, b2) -> {
-            double v1 = ((NumericMetricsAggregator.SingleValue) aggregator).metric(((InternalPathHierarchy.InternalBucket) b1).bucketOrd);
-            double v2 = ((NumericMetricsAggregator.SingleValue) aggregator).metric(((InternalPathHierarchy.InternalBucket) b2).bucketOrd);
+            double v1 = ((NumericMetricsAggregator.SingleValue) aggregator)
+                    .metric(((InternalPathHierarchy.InternalBucket) b1).bucketOrd);
+            double v2 = ((NumericMetricsAggregator.SingleValue) aggregator)
+                    .metric(((InternalPathHierarchy.InternalBucket) b2).bucketOrd);
             // some metrics may return NaN (eg. avg, variance, etc...) in which case we'd like to push all of those to
             // the bottom
             return Comparators.compareDiscardNaN(v1, v2, asc);
