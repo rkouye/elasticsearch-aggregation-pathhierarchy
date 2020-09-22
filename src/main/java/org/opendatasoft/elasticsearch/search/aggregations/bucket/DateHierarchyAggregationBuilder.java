@@ -119,7 +119,7 @@ public class DateHierarchyAggregationBuilder extends ValuesSourceAggregationBuil
     }
 
     public static final DateHierarchyAggregator.BucketCountThresholds DEFAULT_BUCKET_COUNT_THRESHOLDS = new
-            DateHierarchyAggregator.BucketCountThresholds(10, -1);
+            DateHierarchyAggregator.BucketCountThresholds(1, 0, 10, -1);
     private static final ObjectParser<DateHierarchyAggregationBuilder, Void> PARSER;
     static {
 

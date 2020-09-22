@@ -47,7 +47,7 @@ public class PathHierarchyAggregationBuilder extends ValuesSourceAggregationBuil
     public static final ParseField MIN_DOC_COUNT_FIELD = new ParseField("min_doc_count");
 
     public static final PathHierarchyAggregator.BucketCountThresholds DEFAULT_BUCKET_COUNT_THRESHOLDS = new
-            PathHierarchyAggregator.BucketCountThresholds(10, -1);
+            PathHierarchyAggregator.BucketCountThresholds(1, 0, 10, -1);
     private static final ObjectParser<PathHierarchyAggregationBuilder, Void> PARSER;
     static {
         PARSER = new ObjectParser<>(PathHierarchyAggregationBuilder.NAME);

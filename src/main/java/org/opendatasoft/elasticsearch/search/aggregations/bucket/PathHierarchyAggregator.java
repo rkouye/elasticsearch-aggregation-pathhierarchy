@@ -3,121 +3,38 @@ package org.opendatasoft.elasticsearch.search.aggregations.bucket;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.util.BytesRef;
 import org.apache.lucene.util.BytesRefBuilder;
-import org.elasticsearch.ElasticsearchException;
-import org.elasticsearch.common.io.stream.StreamInput;
-import org.elasticsearch.common.io.stream.StreamOutput;
-import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.lease.Releasables;
 import org.elasticsearch.common.util.BytesRefHash;
-import org.elasticsearch.common.xcontent.ToXContentFragment;
-import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.common.util.Comparators;
 import org.elasticsearch.index.fielddata.SortedBinaryDocValues;
+import org.elasticsearch.search.DocValueFormat;
 import org.elasticsearch.search.aggregations.Aggregator;
-import org.elasticsearch.search.aggregations.BucketOrder;
-import org.elasticsearch.search.aggregations.InternalOrder;
 import org.elasticsearch.search.aggregations.AggregatorFactories;
+import org.elasticsearch.search.aggregations.BucketOrder;
 import org.elasticsearch.search.aggregations.InternalAggregation;
+import org.elasticsearch.search.aggregations.InternalOrder;
 import org.elasticsearch.search.aggregations.LeafBucketCollector;
 import org.elasticsearch.search.aggregations.LeafBucketCollectorBase;
 import org.elasticsearch.search.aggregations.bucket.BucketsAggregator;
+import org.elasticsearch.search.aggregations.bucket.MultiBucketsAggregation;
+import org.elasticsearch.search.aggregations.bucket.SingleBucketAggregator;
+import org.elasticsearch.search.aggregations.bucket.terms.TermsAggregator;
+import org.elasticsearch.search.aggregations.metrics.NumericMetricsAggregator;
 import org.elasticsearch.search.aggregations.pipeline.PipelineAggregator;
+import org.elasticsearch.search.aggregations.support.AggregationPath;
 import org.elasticsearch.search.aggregations.support.ValuesSource;
 import org.elasticsearch.search.internal.SearchContext;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.regex.Pattern;
 
-public class PathHierarchyAggregator extends BucketsAggregator {
-
-    public static class BucketCountThresholds implements Writeable, ToXContentFragment {
-        private int requiredSize;
-        private int shardSize;
-
-        public BucketCountThresholds(int requiredSize, int shardSize) {
-            this.requiredSize = requiredSize;
-            this.shardSize = shardSize;
-        }
-
-        /**
-         * Read from a stream.
-         */
-        public BucketCountThresholds(StreamInput in) throws IOException {
-            requiredSize = in.readInt();
-            shardSize = in.readInt();
-        }
-
-        @Override
-        public void writeTo(StreamOutput out) throws IOException {
-            out.writeInt(requiredSize);
-            out.writeInt(shardSize);
-        }
-
-        public BucketCountThresholds(PathHierarchyAggregator.BucketCountThresholds bucketCountThresholds) {
-            this(bucketCountThresholds.requiredSize, bucketCountThresholds.shardSize);
-        }
-
-        public void ensureValidity() {
-            // shard_size cannot be smaller than size as we need to at least fetch size entries from every shards in order to return size
-            if (shardSize < requiredSize) {
-                setShardSize(requiredSize);
-            }
-
-            if (requiredSize <= 0 || shardSize <= 0) {
-                throw new ElasticsearchException("parameters [required_size] and [shard_size] must be >0 in path-hierarchy aggregation.");
-            }
-        }
-
-        public int getRequiredSize() {
-            return requiredSize;
-        }
-
-        public void setRequiredSize(int requiredSize) {
-            this.requiredSize = requiredSize;
-        }
-
-        public int getShardSize() {
-            return shardSize;
-        }
-
-        public void setShardSize(int shardSize) {
-            this.shardSize = shardSize;
-        }
-
-        @Override
-        public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
-            builder.field(PathHierarchyAggregationBuilder.SIZE_FIELD.getPreferredName(), requiredSize);
-            if (shardSize != -1) {
-                builder.field(PathHierarchyAggregationBuilder.SHARD_SIZE_FIELD.getPreferredName(), shardSize);
-            }
-            return builder;
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(requiredSize, shardSize);
-        }
-
-        @Override
-        public boolean equals(Object obj) {
-            if (obj == null) {
-                return false;
-            }
-            if (getClass() != obj.getClass()) {
-                return false;
-            }
-            PathHierarchyAggregator.BucketCountThresholds other = (PathHierarchyAggregator.BucketCountThresholds) obj;
-            return Objects.equals(requiredSize, other.requiredSize)
-                    && Objects.equals(shardSize, other.shardSize);
-        }
-    }
-
-
+public class PathHierarchyAggregator extends TermsAggregator {
     private final ValuesSource valuesSource;
     private final BytesRefHash bucketOrds;
     private final BucketOrder order;
@@ -140,7 +57,8 @@ public class PathHierarchyAggregator extends BucketsAggregator {
             List<PipelineAggregator> pipelineAggregators,
             Map<String, Object> metaData
     ) throws IOException {
-        super(name, factories, context, parent, pipelineAggregators, metaData);
+        super(name, factories, context, parent, bucketCountThresholds, order, DocValueFormat.RAW,
+                subAggCollectionMode(bucketCountThresholds.getShardSize()), pipelineAggregators, metaData);
         this.valuesSource = valuesSource;
         this.separator = separator;
         this.minDocCount = minDocCount;
@@ -148,6 +66,12 @@ public class PathHierarchyAggregator extends BucketsAggregator {
         this.order = InternalOrder.validate(order, this);
         this.bucketCountThresholds = bucketCountThresholds;
         this.minDepth = minDepth;
+    }
+
+    private static SubAggCollectionMode subAggCollectionMode(int shardSize){
+        // We don't know the field cardinality, so we default to BF unless we know for sure all buckets will be returned
+        // It is more performant and accuracy is a tradeoff of shard size just like TermsAggregation
+        return shardSize == Integer.MAX_VALUE ? SubAggCollectionMode.DEPTH_FIRST : SubAggCollectionMode.BREADTH_FIRST;
     }
 
     /**
@@ -204,8 +128,15 @@ public class PathHierarchyAggregator extends BucketsAggregator {
 
         PathSortedTree<String, InternalPathHierarchy.InternalBucket> pathSortedTree = new PathSortedTree<>(order.comparator(this), size);
 
-        InternalPathHierarchy.InternalBucket spare = null;
-        for (int i = 0; i < bucketOrds.size(); i++) {
+        // Collect buckets
+        long[] bucketOrdArray = new long[size];
+        for (int i = 0; i < size; i++) {
+            bucketOrdArray[i] = i;
+        }
+        runDeferredCollections(bucketOrdArray);
+
+        InternalPathHierarchy.InternalBucket spare;
+        for (int i = 0; i < size; i++) {
             spare = new InternalPathHierarchy.InternalBucket(0, null, null, new BytesRef(), 0, 0, null);
             BytesRef term = new BytesRef();
             bucketOrds.get(i, term);
@@ -248,6 +179,50 @@ public class PathHierarchyAggregator extends BucketsAggregator {
 
         return new InternalPathHierarchy(name, list, order, minDocCount, bucketCountThresholds.getRequiredSize(),
                 bucketCountThresholds.getShardSize(), otherHierarchyNodes, separator, pipelineAggregators(), metaData());
+    }
+
+    @Override
+    public Comparator<MultiBucketsAggregation.Bucket> bucketComparator(AggregationPath path, boolean asc) {
+
+        final Aggregator aggregator = path.resolveAggregator(this);
+        final String key = path.lastPathElement().key;
+
+        if (aggregator instanceof SingleBucketAggregator) {
+            assert key == null : "this should be picked up before the aggregation is executed - on validate";
+            return (b1, b2) -> {
+                int mul = asc ? 1 : -1;
+                int v1 = ((SingleBucketAggregator) aggregator).bucketDocCount(((InternalPathHierarchy.InternalBucket) b1).bucketOrd);
+                int v2 = ((SingleBucketAggregator) aggregator).bucketDocCount(((InternalPathHierarchy.InternalBucket) b2).bucketOrd);
+                return mul * (v1 - v2);
+            };
+        }
+
+        // with only support single-bucket aggregators
+        assert !(aggregator instanceof BucketsAggregator) : "this should be picked up before the aggregation is executed - on validate";
+
+        if (aggregator instanceof NumericMetricsAggregator.MultiValue) {
+            assert key != null : "this should be picked up before the aggregation is executed - on validate";
+            return (b1, b2) -> {
+                double v1 = ((NumericMetricsAggregator.MultiValue) aggregator)
+                        .metric(key, ((InternalPathHierarchy.InternalBucket) b1).bucketOrd);
+                double v2 = ((NumericMetricsAggregator.MultiValue) aggregator)
+                        .metric(key, ((InternalPathHierarchy.InternalBucket) b2).bucketOrd);
+                // some metrics may return NaN (eg. avg, variance, etc...) in which case we'd like to push all of those to
+                // the bottom
+                return Comparators.compareDiscardNaN(v1, v2, asc);
+            };
+        }
+
+        // single-value metrics agg
+        return (b1, b2) -> {
+            double v1 = ((NumericMetricsAggregator.SingleValue) aggregator)
+                    .metric(((InternalPathHierarchy.InternalBucket) b1).bucketOrd);
+            double v2 = ((NumericMetricsAggregator.SingleValue) aggregator)
+                    .metric(((InternalPathHierarchy.InternalBucket) b2).bucketOrd);
+            // some metrics may return NaN (eg. avg, variance, etc...) in which case we'd like to push all of those to
+            // the bottom
+            return Comparators.compareDiscardNaN(v1, v2, asc);
+        };
     }
 
     @Override
